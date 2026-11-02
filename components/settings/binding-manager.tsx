@@ -58,6 +58,7 @@ import {
     loadUserIdentities,
     ensureSettingsStorageHydrated,
 } from "@/lib/settings-storage";
+import { resolveEmbeddingModel } from "@/lib/memory-embedding";
 import { hydrateKvDb } from "@/lib/kv-db";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import { loadCharacters } from "@/lib/character-storage";
@@ -540,6 +541,21 @@ export function BindingManager() {
         const selectedOption = options.find(o => o.id === currentValue);
         const displayValue = selectedOption ? selectedOption.name : "继承全局";
 
+        let recallHint: { tone: "ok" | "warn" | "idle"; text: string } | null = null;
+        if (field === "embeddingApiConfigId") {
+            const bound = config.embeddingApiConfigId
+                ? apiConfigs.find(c => c.id === config.embeddingApiConfigId)
+                : undefined;
+            const effective = bound ?? apiConfigs.find(c => c.id === config.globalDefaults.apiConfigId) ?? null;
+            if (!effective) {
+                recallHint = { tone: "idle", text: "未配置接口，向量召回不可用" };
+            } else if (resolveEmbeddingModel(effective)) {
+                recallHint = { tone: "ok", text: `向量召回已生效 · ${effective.name || effective.provider}` };
+            } else {
+                recallHint = { tone: "warn", text: "当前接口不支持向量模型，已降级为按时间召回" };
+            }
+        }
+
         return (
             <div key={field} className="binding-aux-select">
                 <button
@@ -555,6 +571,22 @@ export function BindingManager() {
                     <span className="binding-card-copy">
                         <span className="binding-choice-label">{label}</span>
                         <span className="binding-choice-desc">{getAuxFieldDescription(field)}</span>
+                        {recallHint && (
+                            <span
+                                style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                    marginTop: 3,
+                                    fontSize: "calc(10px * var(--app-text-scale, 1))",
+                                    fontWeight: 700,
+                                    color: recallHint.tone === "ok" ? "#16a34a" : recallHint.tone === "warn" ? "#d97706" : "#9ca3af",
+                                }}
+                            >
+                                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor", display: "inline-block" }} />
+                                {recallHint.text}
+                            </span>
+                        )}
                     </span>
                     <span className="binding-choice-row">
                         <span className={selectedOption ? "binding-choice-value" : "binding-choice-value is-empty"}>{displayValue}</span>
