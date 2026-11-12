@@ -153,6 +153,18 @@ export type ApiConfig = {
     enableImageRecognition: boolean;
     enableImageGeneration: boolean;
     preventEmptyGenerateRambling?: boolean;
+    /**
+     * 思考强度：向 OpenAI 兼容请求体注入标准参数 reasoning_effort。
+     * 空/未设置 = 完全不发送，跟随中转站渠道默认（很多站子默认 medium）。
+     * New API 类网关会把它映射到上游（Gemini 3 的 thinking_level / Claude 的 thinking budget）。
+     */
+    reasoningEffort?: "" | "low" | "medium" | "high";
+    /**
+     * 高级兜底：自定义额外请求体参数（JSON 对象字符串），合并进 chat/completions 请求体。
+     * 用于站子使用非标准字段名控制思考（如 thinking_level / thinking）时，无需改代码即可自行配置。
+     * 受保护的核心字段（model / messages / stream / tools）不会被覆盖；非法 JSON 静默忽略。
+     */
+    customRequestParams?: string;
 };
 
 // --- VoiceApiConfig (migrated from voice-settings.tsx) ---

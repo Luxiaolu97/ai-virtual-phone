@@ -386,6 +386,38 @@ export function ApiSettings() {
                                             </div>
                                         </div>
 
+                                        {/* 思考强度：客户端主动带 reasoning_effort，避免中转站按渠道默认(medium)压短思考 */}
+                                        <div className="flex flex-col gap-1">
+                                            <label className="menu-desc ml-1">思考强度 (Reasoning Effort)</label>
+                                            <select
+                                                value={config.reasoningEffort || ""}
+                                                onChange={(e) => updateConfig(config.id, { reasoningEffort: e.target.value as ApiConfig["reasoningEffort"] })}
+                                                className="ui-select"
+                                            >
+                                                <option value="">跟随接口默认（不发送）</option>
+                                                <option value="low">低 · low</option>
+                                                <option value="medium">中 · medium</option>
+                                                <option value="high">高 · high（思考更充分、更慢更费 token）</option>
+                                            </select>
+                                            <span className="menu-desc ml-1">
+                                                仅对支持思考强度的模型生效；部分中转站需要客户端主动指定档位，否则默认 medium。改完发一条消息即可验证。
+                                            </span>
+                                        </div>
+
+                                        {/* 高级兜底：站子若用非标准字段控制思考，可在此自行填 JSON，无需改代码 */}
+                                        <div className="flex flex-col gap-1">
+                                            <label className="menu-desc ml-1">高级 · 自定义请求参数（可留空）</label>
+                                            <Input
+                                                type="text"
+                                                value={config.customRequestParams || ""}
+                                                onChange={(e) => updateConfig(config.id, { customRequestParams: e.target.value })}
+                                                placeholder='例如 {"thinking_level":"high"}'
+                                            />
+                                            <span className="menu-desc ml-1">
+                                                JSON 对象，合并进 chat/completions 请求体。仅当上面的档位不生效、站子要求特殊字段时才需要填。
+                                            </span>
+                                        </div>
+
                                         <div className="flex gap-3 mt-1">
                                             <button
                                                 onClick={() => fetchModels(config)}

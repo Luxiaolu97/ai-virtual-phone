@@ -522,6 +522,25 @@ function buildOpenAICompatibleRequest(
         }),
         ...buildSamplingBody(preset),
     };
+    // 思考强度：客户端主动带 reasoning_effort。New API/OpenRouter 类中转站在客户端
+    // 不带此参数时会按渠道默认（常见为 medium）处理，导致思考被压短。空值 = 不发送，
+    // 保持原有行为，不影响不支持该字段的模型/接口。
+    if (config.reasoningEffort) {
+        body.reasoning_effort = config.reasoningEffort;
+    }
+    // 高级兜底：合并自定义请求体参数，用于站子采用非标准字段名（thinking_level 等）
+    // 控制思考档位的情况。核心结构字段不允许被覆盖，非法 JSON 静默忽略，绝不阻断聊天。
+    if (config.customRequestParams && config.customRequestParams.trim()) {
+        try {
+            const parsed = JSON.parse(config.customRequestParams) as unknown;
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                const protectedKeys = new Set(["model", "messages", "stream", "tools", "tool_choice"]);
+                for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+                    if (!protectedKeys.has(key)) body[key] = value;
+                }
+            }
+        } catch { /* 非法 JSON：忽略，保持默认请求 */ }
+    }
     if (
         options.maxTokens
         && options.maxTokens > 0
