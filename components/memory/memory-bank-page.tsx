@@ -1,7 +1,7 @@
 "use client";
 
 import { Component, useState, useEffect, useCallback, type CSSProperties, type ReactNode } from "react";
-import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, type LucideIcon } from "lucide-react";
+import { Trash2, Zap, Clock, Users, Archive, AlertCircle, Search, Brain, FileText, MoreHorizontal, Plus, Edit3, X, Check, ChevronRight, Filter, Download, type LucideIcon } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { MemoryTimeline } from "./memory-timeline";
 import { Toggle } from "@/components/ui/form";
@@ -22,6 +22,7 @@ import {
     getLastCoreSummarizedTimestamp,
 } from "@/lib/memory-storage";
 import { hydrateChatStorage } from "@/lib/chat-storage";
+import { downloadFile } from "@/lib/download-utils";
 import { loadNativeTimeline, type NativeTimelineEntry } from "@/lib/short-term-assembler";
 import { runSummarizationPipeline } from "@/lib/memory-summarizer";
 import { runCoreMemoryPipeline } from "@/lib/core-memory-builder";
@@ -169,6 +170,65 @@ function relativeTime(isoStr: string): string {
     return `${Math.floor(days / 30)}个月前`;
 }
 
+// ── 单角色记忆归档导出（仅核心 + 长期，按月份分组）──
+// 导出目的是给人工按月压缩整理，故只保留日期、类型与完整正文，
+// 不带 embedding 向量、ID、importance 或任何配置字段。
+const ARCHIVE_TYPE_LABEL: Record<MemoryEntry["type"], string> = {
+    long_term: "长期记忆",
+    core: "核心记忆",
+};
+
+function archiveMonthKey(entry: MemoryEntry): string {
+    const match = /^(\d{4}-\d{2})/.exec(entry.createdAt ?? "");
+    return match ? match[1] : "未知月份";
+}
+
+function archiveDay(entry: MemoryEntry): string {
+    const match = /^(\d{4}-\d{2}-\d{2})/.exec(entry.createdAt ?? "");
+    return match ? match[1] : (entry.createdAt ?? "").slice(0, 10) || "未知日期";
+}
+
+/** 生成纯文本归档：按创建月份分节，月份内按日期升序，正文原样保留。 */
+function buildMemoryArchive(charName: string, entries: MemoryEntry[], exportedAt: Date): string {
+    const core = entries.filter(e => e.type === "core");
+    const longTerm = entries.filter(e => e.type === "long_term");
+    const groups = new Map<string, MemoryEntry[]>();
+    for (const entry of entries) {
+        const key = archiveMonthKey(entry);
+        const bucket = groups.get(key);
+        if (bucket) bucket.push(entry);
+        else groups.set(key, [entry]);
+    }
+    const months = [...groups.keys()].sort(); // 升序：从早到晚，便于按时间线整理
+    const lines: string[] = [
+        `# ${charName} · 记忆归档`,
+        "",
+        `- 导出时间：${exportedAt.toLocaleString("zh-CN", { hour12: false })}`,
+        `- 导出范围：核心记忆 ${core.length} 条 / 长期记忆 ${longTerm.length} 条，共 ${entries.length} 条`,
+        "- 分组方式：按记忆创建月份分节，月份内按日期升序；每节以 `## 月份` 开头，可整节复制去压缩整理。",
+        "- 内容说明：仅含这两类记忆的日期、类型与完整正文；不含短期事件流水、向量数据、ID 与配置。",
+        "",
+    ];
+    for (const month of months) {
+        const bucket = (groups.get(month) ?? []).slice().sort((a, b) =>
+            (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+        lines.push("---", "", `## ${month} （共 ${bucket.length} 条）`, "");
+        for (const entry of bucket) {
+            lines.push(`### [${archiveDay(entry)}] ${ARCHIVE_TYPE_LABEL[entry.type]}`, "");
+            lines.push((entry.content ?? "").trim(), "");
+        }
+    }
+    return lines.join("\n").trimEnd() + "\n";
+}
+
+/** 文件名移除各平台非法字符，避免 iOS 分享保存失败。 */
+function archiveFileName(charName: string, exportedAt: Date): string {
+    const safe = (charName || "角色").replace(/[\\/:*?"<>|\r\n\t]/g, "_").trim() || "角色";
+    const d = exportedAt;
+    const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    return `${safe}_记忆归档_核心+长期_${stamp}.md`;
+}
+
 type CharacterMemoryInfo = {
     character: Character;
     longTermCount: number;
@@ -203,6 +263,7 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
     const [entryMenuId, setEntryMenuId] = useState<string | null>(null);
     const [memoryEditor, setMemoryEditor] = useState<MemoryEditorState | null>(null);
     const [savingMemory, setSavingMemory] = useState(false);
+    const [exportingArchive, setExportingArchive] = useState(false);
     const [summarizeRangeOpen, setSummarizeRangeOpen] = useState(false);
     const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
 
@@ -336,6 +397,33 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
 
     const showNotice = (msg: string) => {
         onNotice?.(msg);
+    };
+
+    /** 从数据库全量读取当前角色的核心 + 长期记忆，生成按月份分组的文档并下载。 */
+    const handleExportArchive = async () => {
+        if (!selectedCharId || exportingArchive) return;
+        setExportingArchive(true);
+        try {
+            const [core, longTerm] = await Promise.all([
+                loadMemoryEntriesByType(selectedCharId, "core"),
+                loadMemoryEntriesByType(selectedCharId, "long_term"),
+            ]);
+            const entries = [...core, ...longTerm];
+            if (entries.length === 0) {
+                showNotice("这个角色还没有核心/长期记忆，暂无可导出的内容。");
+                return;
+            }
+            const charName = selectedChar?.name || "角色";
+            const now = new Date();
+            const text = buildMemoryArchive(charName, entries, now);
+            const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+            await downloadFile(blob, archiveFileName(charName, now));
+            showNotice(`已导出 ${core.length} 条核心 + ${longTerm.length} 条长期记忆，按月份分组。`);
+        } catch (err) {
+            showNotice(`导出失败：${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+            setExportingArchive(false);
+        }
     };
 
     const handleManualSummarize = async (range: SummarizeRange = "auto") => {
@@ -672,6 +760,22 @@ export function MemoryBankPage({ view, selectedCharId, onSelectChar, onNotice }:
             <div className="flex flex-col absolute inset-0 overflow-hidden" style={{ padding: "0 16px" }}>
                 {/* Content */}
                 <div className="memory-detail-scroll flex-1 overflow-y-auto flex flex-col gap-2 min-h-0">
+                    <div className="g-card" style={{ padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+                        <div className="menu-label-group" style={{ flex: 1, minWidth: 0 }}>
+                            <span className="menu-label">导出本角色记忆</span>
+                            <span className="menu-desc">仅核心 + 长期记忆，按月份分组的纯文本文档，不含短期流水与向量数据</span>
+                        </div>
+                        <button
+                            type="button"
+                            className="ui-btn ui-btn-outline py-1 px-3 ts-12"
+                            onClick={() => void handleExportArchive()}
+                            disabled={exportingArchive}
+                            style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}
+                        >
+                            <Download size={14} />
+                            {exportingArchive ? "导出中…" : "导出"}
+                        </button>
+                    </div>
                     <MemoryDetailBoundary>
                     {loading ? (
                         <p className="text-center ts-14 mt-10 text-secondary">
