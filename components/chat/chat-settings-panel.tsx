@@ -396,6 +396,12 @@ export function ChatSettingsPanel({
     // 流式生成：按会话区分（线上/线下），存 ChatSession 字段，默认关
     const [streamOnline, setStreamOnline] = useState(session.streamOnline === true);
     const [streamOffline, setStreamOffline] = useState(session.streamOffline === true);
+    // 逐条弹出消息：模拟真人发消息的节奏，默认开；与流式完全独立。间隔毫秒默认 800
+    const [staggerReveal, setStaggerReveal] = useState(session.staggerReveal !== false);
+    const [staggerRevealMs, setStaggerRevealMs] = useState(() => {
+        const v = session.staggerRevealMs;
+        return typeof v === "number" && Number.isFinite(v) ? Math.max(150, Math.min(5000, Math.round(v))) : 800;
+    });
     const defaultBilingualPrompt = session.isGroup ? DEFAULT_GROUP_CHAT_BILINGUAL_PROMPT : DEFAULT_CHAT_BILINGUAL_PROMPT;
     const defaultOfflineBilingualPrompt = session.isGroup ? DEFAULT_GROUP_OFFLINE_CHAT_BILINGUAL_PROMPT : DEFAULT_OFFLINE_CHAT_BILINGUAL_PROMPT;
     const [bilingualTranslationPrompt, setBilingualTranslationPrompt] = useState(session.bilingualTranslationPrompt || defaultBilingualPrompt);
@@ -1123,6 +1129,40 @@ export function ChatSettingsPanel({
                                     }}
                                 />
                             </div>
+                        </div>
+                        <div className="menu-item" style={{ flexWrap: "wrap" }}>
+                            <ChatInfoIcon icon={MessageSquare} color={BINDING_ACCENTS.preset} />
+                            <div className="menu-label-group" style={{ flex: 1 }}>
+                                <span className="menu-label">逐条弹出消息</span>
+                                <span className="menu-desc">仅当前会话：多条回复像真人一样按间隔依次出现；关闭则一次性全部显示（与流式无关）</span>
+                            </div>
+                            <div className="menu-right">
+                                <Toggle
+                                    checked={staggerReveal}
+                                    onChange={c => {
+                                        setStaggerReveal(c);
+                                        updateSession({ staggerReveal: c });
+                                    }}
+                                />
+                            </div>
+                            {staggerReveal && (
+                                <div style={{ width: "100%", display: "flex", alignItems: "center", gap: 6, paddingLeft: 34, marginTop: 6, flexWrap: "wrap" }}>
+                                    <span className="menu-desc" style={{ marginRight: 2 }}>每条间隔</span>
+                                    {[400, 800, 1500, 2500].map(ms => (
+                                        <button
+                                            key={ms}
+                                            type="button"
+                                            className={`ui-btn ${staggerRevealMs === ms ? "ui-btn-primary" : "ui-btn-ghost"} py-1 px-2 ts-12`}
+                                            onClick={() => {
+                                                setStaggerRevealMs(ms);
+                                                updateSession({ staggerRevealMs: ms });
+                                            }}
+                                        >
+                                            {(ms / 1000).toFixed(1)}s
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                         <div className="menu-item">
                             <ChatInfoIcon icon={Sparkles} color={BINDING_ACCENTS.preset} />

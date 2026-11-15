@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, Fragment, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStreamingEnabled } from "@/lib/chat-storage";
+import { ChatSession, ChatMessage, CHAT_APP_SETTINGS_UPDATED_EVENT, CHAT_INITIAL_VISIBLE_MESSAGE_COUNT, CHAT_LOAD_MORE_MESSAGE_COUNT, CHAT_REQUEST_REPLY_EVENT, loadChatAppSettings, loadChatMessages, loadChatContacts, loadChatSessions, saveChatSessions, pushChatMessage, updateChatMessage, deleteChatMessage, deleteChatMessagesFrom, deleteChatMessagesByIds, retractChatMessage, editChatMessage, updateMessageMediaData, replaceResponseBatchWithParts, replaceGroupResponseRound, isReadingDiscussMessage, isSystemInstructionMessage, createResponseBatchId, createResponseRoundId, getLatestStateValues, getLatestCharacterStateValues, compareChatMessages, isSessionStaggerEnabled, getSessionStaggerMs } from "@/lib/chat-storage";
 import { cleanStreamText, splitStreamPreviewSegments, stripLiteralTexts, stripXmlTagBlocks } from "@/lib/stream-preview";
 import type { StateValue } from "@/lib/chat-storage";
 import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
@@ -2481,7 +2481,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     continue;
                 }
                 if (part.mediaType === "group_admin_notice") {
-                    if (!isFirst && !revealOptions?.instantReveal) await abortableDelay(800, guard?.signal);
+                    if (!isFirst && !revealOptions?.instantReveal) await abortableDelay(getSessionStaggerMs(session), guard?.signal);
                     throwIfGenerationStopped(guard);
                     const applied = applyAIGroupAdminAction(r.characterId, part.mediaData);
                     if (!applied) continue; // 无权限/名字不合法：整个标签静默丢弃
@@ -2509,7 +2509,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                 if (part.mediaType === "poke") {
                     const pokeSender = (part.mediaData?.pokeSender === "我" ? r.characterName : part.mediaData?.pokeSender) || r.characterName;
                     const pokeTarget = part.mediaData?.pokeTarget || "某人";
-                    if (!isFirst && !revealOptions?.instantReveal) await abortableDelay(800, guard?.signal);
+                    if (!isFirst && !revealOptions?.instantReveal) await abortableDelay(getSessionStaggerMs(session), guard?.signal);
                     throwIfGenerationStopped(guard);
                     isFirst = false;
                     const msg = pushChatMessage({
@@ -2535,7 +2535,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     });
                     continue;
                 }
-                if (!isFirst && !revealOptions?.instantReveal) await abortableDelay(800, guard?.signal);
+                if (!isFirst && !revealOptions?.instantReveal) await abortableDelay(getSessionStaggerMs(session), guard?.signal);
                 throwIfGenerationStopped(guard);
                 isFirst = false;
                 const attachHere = !attachedState && canCarryFoldedPanel(part);
@@ -2992,7 +2992,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
         } else {
             publishVisibleMessage(messageDrafts[0]);
             for (let i = 1; i < messageDrafts.length; i++) {
-                await abortableDelay(800, options?.signal);
+                await abortableDelay(getSessionStaggerMs(session), options?.signal);
                 throwIfGenerationStopped(options);
                 publishVisibleMessage(messageDrafts[i]);
             }
@@ -3265,7 +3265,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     },
                 );
                 if (!isCurrentGeneration()) return;
-                await processGroupParts(results, setMessages, generationGuard, roundReasoning, { instantReveal: isSessionStreamingEnabled(session, true) });
+                await processGroupParts(results, setMessages, generationGuard, roundReasoning, { instantReveal: !isSessionStaggerEnabled(session) });
             } else {
                 let capturedReasoning: string | undefined;
                 const cr = await generateChatCompletion(
@@ -3299,7 +3299,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     },
                 );
                 if (!isCurrentGeneration()) return;
-                const result = await splitAndSaveAIMessages(flattenCompletionResult(cr), { ...generationGuard, reasoningText: capturedReasoning, instantReveal: isSessionStreamingEnabled(session, true) });
+                const result = await splitAndSaveAIMessages(flattenCompletionResult(cr), { ...generationGuard, reasoningText: capturedReasoning, instantReveal: !isSessionStaggerEnabled(session) });
                 if (!isCurrentGeneration()) return;
                 scheduleFollowUp(session.id, 0, result.stateValues);
                 handleCallTrigger(result.triggerCall);
@@ -3700,7 +3700,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         const visibleResults = parseGroupChatResponse(content, nameToId)
                             .filter(item => item.responseText.trim());
                         if (visibleResults.length > 0) {
-                            await processGroupParts(visibleResults, setMessages, generationGuard, reasoning, { instantReveal: isSessionStreamingEnabled(session, true) });
+                            await processGroupParts(visibleResults, setMessages, generationGuard, reasoning, { instantReveal: !isSessionStaggerEnabled(session) });
                         }
 
                         throwIfGenerationStopped(generationGuard);
@@ -3742,7 +3742,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                     await Promise.allSettled(streamedImageReplacementTasks);
                     throwIfGenerationStopped(generationGuard);
                 }
-                await processGroupParts(results, setMessages, generationGuard, pendingGroupReasoning, { instantReveal: isSessionStreamingEnabled(session, true) });
+                await processGroupParts(results, setMessages, generationGuard, pendingGroupReasoning, { instantReveal: !isSessionStaggerEnabled(session) });
             } else {
                 let lastSendResult: Awaited<ReturnType<typeof splitAndSaveAIMessages>> | undefined;
                 // 每轮 LLM 调用的思维链，onReasoning 先于该轮 onTextPart 触发
@@ -3777,7 +3777,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         if (text.trim()) {
                             const reasoningText = pendingReasoning;
                             pendingReasoning = undefined;
-                            lastSendResult = await splitAndSaveAIMessages(text, { ...options, ...generationGuard, reasoningText, instantReveal: isSessionStreamingEnabled(session, true) });
+                            lastSendResult = await splitAndSaveAIMessages(text, { ...options, ...generationGuard, reasoningText, instantReveal: !isSessionStaggerEnabled(session) });
                         }
                     },
                     onToolNotice: (notice) => {
@@ -3801,7 +3801,7 @@ export function ChatRoom({ session, onBack, onDeleted }: ChatRoomProps) {
                         // bubbles. The native tool-call metadata then rides on a separate
                         // empty carrier message — mirroring the group-chat path above.
                         if (content.trim()) {
-                            await splitAndSaveAIMessages(content, { ...generationGuard, reasoningText: reasoning, instantReveal: isSessionStreamingEnabled(session, true) });
+                            await splitAndSaveAIMessages(content, { ...generationGuard, reasoningText: reasoning, instantReveal: !isSessionStaggerEnabled(session) });
                         }
                         if (!isCurrentGeneration()) return;
                         const carrier = pushChatMessage({

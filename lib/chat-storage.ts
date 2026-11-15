@@ -61,6 +61,10 @@ export type ChatSession = {
     streamOnline?: boolean;
     /** 流式生成（线下）：开启后该会话的线下 AI 回复边生成边显示（默认关，保持原整段请求行为） */
     streamOffline?: boolean;
+    /** 逐条弹出消息：模拟真人发消息，多气泡按间隔依次出现（默认开；关掉则一次性全显示，与流式无关） */
+    staggerReveal?: boolean;
+    /** 逐条弹出的间隔毫秒数，默认 800；仅 staggerReveal 开启时生效 */
+    staggerRevealMs?: number;
     /**
      * 线下摘要自动补提：模型没写 <summary> 时再发一次小请求让它补。默认开；
      * 关掉就只调一次 API，那一轮没摘要（不进短期记忆的事件流）。按次计费的接口想省一半调用时关它。
@@ -283,6 +287,19 @@ export function getMaxToolRounds(): number {
 export function isSessionStreamingEnabled(session: Pick<ChatSession, "streamOnline" | "streamOffline"> | null | undefined, online: boolean): boolean {
     if (!session) return false;
     return online ? session.streamOnline === true : session.streamOffline === true;
+}
+
+/** 会话逐条弹出消息是否开启（默认开，除非显式关掉；与流式开关完全独立） */
+export function isSessionStaggerEnabled(session: Pick<ChatSession, "staggerReveal"> | null | undefined): boolean {
+    if (!session) return true;
+    return session.staggerReveal !== false;
+}
+
+/** 会话逐条弹出的间隔毫秒（兜底 800，限制在 150~5000） */
+export function getSessionStaggerMs(session: Pick<ChatSession, "staggerRevealMs"> | null | undefined): number {
+    const raw = session?.staggerRevealMs;
+    if (typeof raw !== "number" || !Number.isFinite(raw)) return 800;
+    return Math.max(150, Math.min(5000, Math.round(raw)));
 }
 
 export const CHAT_APP_SETTINGS_UPDATED_EVENT = "chat-app-settings-updated";
